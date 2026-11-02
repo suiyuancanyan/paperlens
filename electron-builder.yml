@@ -1,0 +1,25 @@
+appId: cn.paperlens.desktop
+productName: 砚读 PaperLens
+directories:
+  output: release
+  app: desktop-app
+files:
+  - main.cjs
+  - preload.cjs
+  - paths.cjs
+  - library-store.cjs
+  - icon.ico
+  - icon.png
+  - package.json
+  - '!node_modules/**'
+extraResources:
+  - from: desktop-runtime
+    to: runtime
+asar: true
+npmRebuild: false
+win:
+  target: dir
+  icon: desktop/icon.ico
+  executableName: PaperLens
+  signAndEditExecutable: true
+  signExecutable: false
