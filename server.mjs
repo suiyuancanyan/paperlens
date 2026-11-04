@@ -3,7 +3,8 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
-import { getCodexStatus, runCodex } from './codex-bridge.mjs';
+import { getCodexStatus, runCodex, isCodexBusy } from './codex-bridge.mjs';
+import { createTranslationService } from './translation-service.mjs';
 import { DEFAULT_CODEX_MODEL } from './shared/config.js';
 import { decodeVisionImages } from './vision-input.mjs';
 
@@ -22,9 +23,24 @@ export function resolveEndpoint(value) {
   return url.href;
 }
 
+const translations=createTranslationService({root,modelBusy:()=>isCodexBusy()||controllers.size>0,translate:async(messages,config,signal)=>{
+  if(config.provider==='codex')return runCodex(messages,{model:config.codexModel||process.env.PAPERLENS_CODEX_MODEL||DEFAULT_CODEX_MODEL,signal});
+  const base=config.base||process.env.PAPERLENS_API_BASE;
+  const model=config.model||process.env.PAPERLENS_MODEL;
+  const key=config.key||process.env.PAPERLENS_API_KEY;
+  if(!base||!model)throw new Error('请在模型设置中填写服务地址和模型名称');
+  const response=await fetch(resolveEndpoint(base),{method:'POST',signal:AbortSignal.any([signal,AbortSignal.timeout(180000)]),headers:{'Content-Type':'application/json',...(key?{Authorization:`Bearer ${key}`}:{})},body:JSON.stringify({model,messages,temperature:0.1,max_tokens:12000,stream:false})});
+  if(!response.ok)throw new Error(response.status===401?'模型验证失败，请检查 API Key':response.status===429?'模型额度不足或请求受限，请稍后重试':`翻译模型返回错误（${response.status}）`);
+  const result=await response.json();
+  if(result.choices?.[0]?.finish_reason==='length')throw new Error('单段译文被模型截断，请使用支持更长输出的模型');
+  const content=result.choices?.[0]?.message?.content;
+  if(typeof content!=='string'||!content.trim())throw new Error('模型未返回有效译文');
+  return content;
+}});
 const controllers=new Set();
 const server = http.createServer(async (req, res) => {
   if(req.url==='/api/health')return send(res,200,{app:'paperlens',instance:process.env.PAPERLENS_DESKTOP_INSTANCE||''});
+  if(await translations.handle(req,res))return;
   if (req.url === '/api/status') {
     const configured = Boolean(process.env.PAPERLENS_API_BASE && process.env.PAPERLENS_MODEL);
     const codex = await getCodexStatus();
@@ -34,6 +50,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST') return send(res, 405, { error: '请使用 POST 请求' });
     if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) return send(res, 403, { error: '请求来源无效' });
     if (!req.headers['content-type']?.includes('application/json')) return send(res, 415, { error: '需要 JSON 数据' });
+    if(translations.isBusy())return send(res,409,{error:'正在全文翻译，请完成或取消后再使用阅读模型'});
     let controller;
     try {
       const chunks = []; let bytes = 0;
@@ -92,6 +109,6 @@ const server = http.createServer(async (req, res) => {
   } catch { send(res, 500, { error: '页面加载失败，请先运行 npm run build' }); }
 });
 server.listen(port, '127.0.0.1', () => console.log(`PaperLens ready: http://127.0.0.1:${port}`));
-const shutdown=()=>{for(const controller of controllers)controller.abort();server.close();vite?.close();if(process.parentPort)setTimeout(()=>process.exit(0),1000).unref();};
+const shutdown=()=>{translations.shutdown();for(const controller of controllers)controller.abort();server.close();vite?.close();if(process.parentPort)setTimeout(()=>process.exit(0),1000).unref();};
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,shutdown);
 process.parentPort?.on('message',event=>{if(event.data?.type==='paperlens:shutdown')shutdown();});
