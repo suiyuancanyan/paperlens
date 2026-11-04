@@ -30,6 +30,7 @@ compare figures side by side, and collect your own notes alongside the paper.
 - Cross-paper figure comparison with linked zoom and panning.
 - An interactive canvas connecting questions, methods, evidence and conclusions.
 - Full-text search, selected-text translation, highlights and image/text excerpts.
+- Full-paper PDF translation with preserved columns, figures and equations; translated-only and bilingual PDF downloads.
 - Paper chat with Markdown, equations and clickable source pages.
 - Saved reading position, note history and full-library backup/restore.
 - Markdown, JSON and SVG exports, plus a Windows desktop build.
@@ -69,6 +70,16 @@ The current Codex default is `gpt-6.1-sol`; you can change the model in settings
 Available models, quota and pricing depend on your provider or account. The app
 does not read or copy Codex credentials. See [`.env.example`](.env.example) for
 optional server configuration.
+
+### Translate a full paper
+
+![Full-paper translation and bilingual PDF downloads](docs/images/full-translation.png)
+
+Open an imported PDF and choose **全文翻译** in the reader toolbar. Select English → Chinese or Chinese → English, then start translation. PaperLens uses the currently selected Codex login or compatible model API and generates a translated-only PDF and a bilingual PDF. Progress, cancellation and status recovery after a page refresh are supported.
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) before the first translation. PaperLens prepares an isolated Python 3.12 environment and installs [BabelDOC](https://github.com/funstory-ai/BabelDOC) separately; model assets and fonts are downloaded on first use. To prepare the environment in advance, run `npm run translation:setup`. Ordinary reading does not require Python.
+
+This feature supports text-based PDFs. Export Word documents to PDF first and apply OCR to image-only scans. Embedded image labels usually stay unchanged; translated text may need different line breaks and font sizes inside the original paragraph regions. Bibliography records remain in the source language. Document text goes only to your selected model provider. Download translated PDFs separately for backup; library JSON backups contain job references, not the generated PDFs.
 
 ### Build the Windows app
 

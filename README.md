@@ -30,6 +30,7 @@
 | 双图对照 | 同篇或跨论文选择两幅图，联动缩放与移动，带来源加入笔记 |
 | 交互画布 | 连接研究问题、方法、证据与结论，点击展开、拖动、缩放 |
 | 原文与笔记 | 全文搜索、选词翻译、高亮、图文摘录、阅读位置恢复、修改历史 |
+| 全文翻译 | PDF 英中互译，保留原分栏、图表与公式，下载译文版或双语对照版 |
 | 论文问答 | 结合原文提问，支持 Markdown、公式与可点击的来源页 |
 | 备份与导出 | 导出 Markdown、JSON、SVG 逻辑图及包含原文件的完整文献库备份 |
 
@@ -79,6 +80,20 @@ npm run desktop:pack
 ```
 
 打开 `release/win-unpacked/PaperLens.exe`。运行时请保留整个 `win-unpacked` 文件夹，可为其中的程序创建桌面快捷方式。桌面包自带运行环境，使用时无需另装 Node.js。
+
+### 一键翻译全文
+
+![全文翻译与双语 PDF 下载](docs/images/full-translation.png)
+
+打开已导入的 PDF，点击阅读页上方的 **全文翻译**，选择英文 → 中文或中文 → 英文，再点击 **翻译全文**。翻译复用当前选择的 Codex 或模型 API，完成后可下载译文 PDF 和双语对照 PDF。原文件保留，支持查看进度、取消任务和刷新后继续查看。
+
+翻译排版由独立安装的 [BabelDOC](https://github.com/funstory-ai/BabelDOC) 引擎处理。首次使用前安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)，应用会自动准备隔离的 Python 3.12 环境、版面模型与字体；也可提前运行：
+
+```sh
+npm run translation:setup
+```
+
+普通阅读不需要 Python。全文翻译目前支持可提取文字的 PDF；Word 请先另存为 PDF，扫描件先进行 OCR。图片内嵌文字通常保留原样，译文的换行和字号会在原段落区域内调整，参考文献保留原文。正文发送到你选择的模型服务，不会自动转发到其他翻译服务。译文 PDF 请单独下载备份，文献库 JSON 备份包含翻译记录而不包含生成的 PDF。详情见[全文翻译说明](docs/usage.zh-CN.md#全文翻译)。
 
 ### 生产运行
 

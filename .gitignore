@@ -11,6 +11,8 @@ artifacts/
 Thumbs.db
 library/
 migration/
+translations/
+__pycache__/
 PaperLens资料/
 public/cmaps/
 public/standard_fonts/

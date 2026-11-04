@@ -16,7 +16,7 @@ export function createTaskQueue(ctx) {
     try{
       while(true){
         const job=state.jobs.find(j=>j.status==='queued');if(!job)break;
-        if(state.analysisId||state.chatBusy||state.visionBusy||state.translationBusy){setTimeout(pump,800);break;}
+        if(state.analysisId||state.chatBusy||state.visionBusy||state.translationBusy||state.fullTranslationBusy){setTimeout(pump,800);break;}
         job.controller=new AbortController();
         try{
           let p=state.papers.find(p=>p.id===job.paperId);

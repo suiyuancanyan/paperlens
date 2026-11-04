@@ -4,6 +4,7 @@ import 'pdfjs-dist/web/pdf_viewer.css';
 import './reader.css';
 import './explore.css';
 import {createExplore} from './explore.js';
+import {createFullTranslation} from './full-translation.js';
 import {readingHTML} from './rich-text.js';
 import {pageCrops,pageLines,cropImage,figureVisuals} from './crops.js';
 import {createReaderTools} from './reader-tools.js';
@@ -42,6 +43,7 @@ async function persist(p, changes, label = '') {
 const tools=createReaderTools({state,current,persist,render,modal,closeModal,toast,err,ic,e,modelCall,isConfigured,getPaper});
 const tasks=createTaskQueue({state,extractPaper,savePaper,persist,analyze,render,toast,err,e,ic,isConfigured,openPaper});
 const explore=createExplore({state,current,e,ic,render,modal,closeModal,toast,persist,tools,visualPixels,refreshIcons});
+const fullTranslation=createFullTranslation({state,current,getFile,persist,modal,toast,e,ic,isConfigured,settingsModal,download,refreshIcons});
 function safeRender(){if(!document.activeElement?.matches('input,textarea,select'))render();else tasks.update();}
 
 function err(error) { toast(error.message || '操作失败，请重试', true); }
@@ -129,7 +131,7 @@ function pageLink(p,item) { return item.page ? `<button class="page-link" data-p
 function reader() {
   const p = current(); if (!p) { state.current = null; return dashboard(); }
   const a = p.analysis;
-  return `<div class="reader-page content-fade"><div class="reader-breadcrumb"><button class="text-button" data-action="back">${ic('arrow-left')} 返回文献库</button><div class="reader-tools">${tools.readingControls()}<button class="secondary compact" data-action="read">${ic(p.read ? 'circle-check' : 'check')}${p.read ? '已读' : '标记已读'}</button><button class="icon-button favorite ${p.favorite ? 'is-favorite' : ''}" data-favorite="${p.id}" aria-label="收藏论文">${ic('bookmark')}</button><button class="secondary compact" data-action="export">${ic('download')}导出</button><button class="icon-button danger" data-action="delete" aria-label="移除论文">${ic('trash-2')}</button></div></div>
+  return `<div class="reader-page content-fade"><div class="reader-breadcrumb"><button class="text-button" data-action="back">${ic('arrow-left')} 返回文献库</button><div class="reader-tools">${tools.readingControls()}<button class="secondary compact" data-action="read">${ic(p.read ? 'circle-check' : 'check')}${p.read ? '已读' : '标记已读'}</button><button class="icon-button favorite ${p.favorite ? 'is-favorite' : ''}" data-favorite="${p.id}" aria-label="收藏论文">${ic('bookmark')}</button><button class="secondary compact" data-action="full-translate">${ic('languages')}全文翻译</button><button class="secondary compact" data-action="export">${ic('download')}导出</button><button class="icon-button danger" data-action="delete" aria-label="移除论文">${ic('trash-2')}</button></div></div>
     <section class="paper-header"><div class="paper-heading-meta"><span class="pill green">${modeLabel(p)}</span><span>${e(a.language)}</span><span>${p.type === 'demo' ? '内置精选文献' : p.type.toUpperCase() + ' · ' + p.pages.length + ' ' + sourceLabel(p) + ' · ' + formatSize(p.size)}</span></div><h1>${e(a.title)}</h1><button class="text-button metadata-edit" data-action="edit-metadata">${ic('pencil')} 编辑基本信息</button><p class="authors">${e(a.authors || '作者信息待确认')} ${a.year ? '<span>·</span>' + e(a.year) : ''} ${a.venue ? '<span>·</span>' + e(a.venue) : ''}</p><div class="paper-meta-row"><div class="tags">${a.tags.map(t => `<span>${e(t)}</span>`).join('')}${a.doi ? `<a target="_blank" rel="noopener noreferrer" href="https://doi.org/${encodeURIComponent(a.doi)}">DOI ${ic('external-link')}</a>` : ''}</div><button class="primary compact" data-action="analyze" ${state.analysisId === p.id ? 'disabled' : ''}>${ic(state.analysisId === p.id ? 'loader-circle' : 'sparkles', state.analysisId === p.id ? 'spin' : '')}${state.analysisId === p.id ? '正在深度解读…' : a.mode === 'ai' ? '重新解读' : 'AI 深度解读'}</button></div></section>
     ${a.mode === 'extract' ? `<div class="extraction-banner">${ic('file-check-2')}<span>已完成本地原文提取。${isConfigured() ? '点击「AI 深度解读」生成概括、创新点与研究逻辑。' : '连接 AI 模型后，可自动生成概括、创新点与研究逻辑。'}</span>${!isConfigured() ? '<button class="text-button" data-action="settings">连接模型 →</button>' : ''}</div>` : ''}
     <div class="reader-tabs" role="tablist">${tabs.map(([id,label,icon]) => `<button role="tab" aria-selected="${state.tab === id}" class="${state.tab === id ? 'active' : ''}" data-tab="${id}">${ic(icon)}${label}${id === 'figures' && a.figures.length ? `<span>${a.figures.length}</span>` : ''}</button>`).join('')}</div>
@@ -207,7 +209,7 @@ async function modelCall(messages, config = {}, signal) {
 function settingsValues() { const form = document.querySelector('#settings-form'); const data = new FormData(form); return { provider:String(data.get('provider') || 'codex'), codexModel:String(data.get('codexModel') || '').trim() || DEFAULT_CODEX_MODEL, base:String(data.get('base') || '').trim(), model:String(data.get('model') || '').trim(), key:String(data.get('key') || '').trim(), language:String(data.get('language') || '中文') }; }
 function validConfig(config) { if (config.provider === 'codex') { if (!state.codex.available) throw new Error(state.codex.message); return; } if (!config.base && !config.model && state.serverConfigured) return; if (!config.base || !config.model) throw new Error('请填写模型服务地址和模型名称'); const url = new URL(config.base); if (!['http:','https:'].includes(url.protocol)) throw new Error('服务地址需要以 http:// 或 https:// 开头'); }
 async function analyze(p, silent = false, signal, onProgress = () => {}) {
-  if (state.analysisId || state.visionBusy || state.chatBusy || state.translationBusy) { throw new Error('已有阅读请求正在处理，请稍后重试'); }
+  if (state.analysisId || state.visionBusy || state.chatBusy || state.translationBusy || state.fullTranslationBusy) { throw new Error('已有阅读请求正在处理，请稍后重试'); }
   if (!isConfigured()) { settingsModal(); return; }
   if (p.type === 'demo') { toast('示例已包含精选解读。请导入你的论文使用 AI。'); return; }
   const context = paperContext(p);
@@ -317,7 +319,7 @@ async function openVisual(paperId,visualId) {
 
 async function readVisual() {
   const session=state.visualSession;if(!session)return;
-  if(state.visionBusy||state.analysisId||state.chatBusy||state.translationBusy)return toast('已有阅读请求正在处理，请稍候');
+  if(state.visionBusy||state.analysisId||state.chatBusy||state.translationBusy || state.fullTranslationBusy)return toast('已有阅读请求正在处理，请稍候');
   if(!isConfigured())return toast('请先在模型与阅读设置中连接服务',true);
   if(!session.dataUrl)throw new Error('高清原图仍在加载，请稍候重试');
   const question=document.querySelector('#visual-question').value.trim()||'请解读这张图。';
@@ -344,7 +346,7 @@ async function downloadVisual() {
 }
 
 async function ask(question) {
-  const p = current(); if (!p || !question.trim() || state.chatBusy) return; if(state.visionBusy||state.analysisId||state.chatBusy||state.translationBusy)return toast('已有阅读请求正在处理，请稍候');
+  const p = current(); if (!p || !question.trim() || state.chatBusy) return; if(state.visionBusy||state.analysisId||state.chatBusy||state.translationBusy || state.fullTranslationBusy)return toast('已有阅读请求正在处理，请稍候');
   if (!isConfigured()) return settingsModal();
   if (p.type === 'demo') return toast('请先导入你的论文，再使用论文对话');
   const context = paperContext(p); if (context.length > 180000) return toast('论文文字超过 18 万字符，请拆分后对话',true);
@@ -435,8 +437,14 @@ const actions = {
   analyze:() => analyze(current()),
   read:async () => { const p = current(); await persist(p,latest=>({read:!latest.read})); render(); },
   export:exportModal,
+  'full-translate':()=>fullTranslation.open(),
+  'show-full-translation':()=>fullTranslation.show(),
+  'start-full-translation':()=>fullTranslation.start(),
+  'cancel-full-translation':()=>fullTranslation.cancel(),
+  'download-full-mono':()=>fullTranslation.downloadResult('mono'),
+  'download-full-dual':()=>fullTranslation.downloadResult('dual'),
   'export-logic':() => download(logicSVG(current()),safeName(current())+'-研究逻辑.svg','image/svg+xml'),
-  delete:() => { const p=current(); if (state.analysisId === p.id || state.chatBusy || state.visionBusy) return toast('请等待当前解读或对话完成后再移除'); modal('移除这篇论文？',window.paperlensDesktop?'将同时移除此应用中的原文件、解读与笔记。':'将同时移除此浏览器中的原文件、解读与笔记。',`<div class="delete-title">${e(p.analysis.title)}</div><div class="modal-footer"><button class="secondary" data-action="close-modal">保留论文</button><button class="danger-button" data-delete-confirm="${p.id}">确认移除</button></div>`,'delete-modal'); },
+  delete:() => { const p=current(); if (state.analysisId === p.id || state.chatBusy || state.visionBusy || state.fullTranslationBusy) return toast('请等待当前解读或对话完成后再移除'); modal('移除这篇论文？',window.paperlensDesktop?'将同时移除此应用中的原文件、解读与笔记。':'将同时移除此浏览器中的原文件、解读与笔记。',`<div class="delete-title">${e(p.analysis.title)}</div><div class="modal-footer"><button class="secondary" data-action="close-modal">保留论文</button><button class="danger-button" data-delete-confirm="${p.id}">确认移除</button></div>`,'delete-modal'); },
   'prev-page':() => { state.page=Math.max(1,state.page-1); render(); },
   'next-page':() => { state.page=Math.min(current().pages.length,state.page+1); render(); },
   'zoom-in':() => { state.zoom=Math.min(2,state.zoom+0.15); render(); },
@@ -490,6 +498,7 @@ document.addEventListener('drop', event => { if (event.dataTransfer?.files.lengt
 async function init() {
   try {
     state.papers=await allPapers();
+    void fullTranslation.recover();
     let nativeMigration=false;let migrationFailure=false;
     if(window.paperlensDesktop?.storage){nativeMigration=await window.paperlensDesktop.storage.needsMigration();if(nativeMigration){for(const p of await legacyAllPapers())await savePaper(p,await legacyGetFile(p.id));state.papers=await allPapers();}}
     if(window.paperlensDesktop){

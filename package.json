@@ -1,6 +1,6 @@
 {
   "name": "paperlens",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A local AI paper-reading workspace with figure comparison and an interactive research canvas.",
   "license": "MIT",
   "repository": {"type":"git","url":"https://github.com/suiyuancanyan/paperlens.git"},
@@ -13,6 +13,7 @@
     "build": "vite build",
     "start": "node server.mjs --production",
     "test": "node --test tests/*.test.mjs",
+    "translation:setup": "node scripts/setup-translation.mjs",
     "desktop:prepare": "npm run build && node scripts/prepare-desktop.mjs",
     "desktop:pack": "npm run desktop:prepare && electron-builder --win --dir --x64",
     "desktop:dev": "electron ."

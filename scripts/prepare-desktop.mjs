@@ -5,6 +5,8 @@ import path from 'node:path';
 const runtime=path.resolve('desktop-runtime');await fs.mkdir(runtime,{recursive:true});
 await build({entryPoints:['server.mjs'],outfile:path.join(runtime,'server.mjs'),bundle:true,platform:'node',format:'esm',target:'node24',external:['vite'],banner:{js:'import {createRequire as __createRequire} from "node:module";const require=__createRequire(import.meta.url);'}});
 await fs.cp('dist',path.join(runtime,'dist'),{recursive:true});
+await fs.mkdir(path.join(runtime,'scripts'),{recursive:true});
+await fs.copyFile('scripts/translate-pdf.py',path.join(runtime,'scripts','translate-pdf.py'));
 const svg='<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"><rect x="8" y="8" width="240" height="240" rx="53" fill="#f2f5e9"/><rect x="20" y="20" width="216" height="216" rx="44" fill="#e4edda"/><g transform="translate(32 35) scale(4.8)"><path d="M8 10h8c5 0 7 3 7 8v15c-3-3-6-5-10-5H8zm25 0h-8v18c2-2 5-3 8-3z" fill="#254e3a"/><circle cx="32" cy="7" r="3" fill="#93ac61"/></g></svg>';
 await fs.writeFile('desktop/icon.svg',svg);
 const sizes=[16,32,48,64,128,256];const images=sizes.map(size=>new Resvg(svg,{fitTo:{mode:'width',value:size}}).render().asPng());

@@ -13,6 +13,16 @@ copied from `pdfjs-dist` during installation with their bundled license files.
 The desktop packaging script includes a `THIRD-PARTY-NOTICES.txt` file in its
 runtime output. Electron distributions also carry their own notices.
 
+## Optional PDF translation engine
+
+Full-paper PDF translation invokes [BabelDOC](https://github.com/funstory-ai/BabelDOC)
+as a separate local Python process. BabelDOC is licensed under AGPL-3.0 and is
+installed separately in the user's translation environment, with its own
+dependencies, font/model assets and license notices. Its code and weights are
+not included in the PaperLens source repository or desktop package. The
+PaperLens translation adapter is original project code. Users who redistribute
+the optional engine or its assets must retain and follow their upstream licenses.
+
 ## Reading sample
 
 The three PNGs under `public/samples/` reproduce Figure 1 and the two parts of

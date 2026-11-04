@@ -11,6 +11,7 @@ const executable = () => process.env.PAPERLENS_CODEX_PATH || 'codex';
 let cachedStatus;
 let checking;
 let active = false;
+export const isCodexBusy = () => active;
 
 export async function getCodexStatus({ refresh = false } = {}) {
   if (!refresh && cachedStatus && Date.now() - cachedStatus.at < 30_000) return cachedStatus.value;

@@ -38,7 +38,7 @@ function menu() {
 async function startBackend() {
   const runtime = app.isPackaged ? path.join(process.resourcesPath,'runtime') : path.join(__dirname,'..','desktop-runtime');
   const executable = await resolveCodexPath(process.env, path.dirname(process.execPath));
-  const env = {...process.env,PORT:String(port),PAPERLENS_DESKTOP_INSTANCE:instance,...(executable?{PAPERLENS_CODEX_PATH:executable}:{})};
+  const env = {...process.env,PORT:String(port),PAPERLENS_DESKTOP_INSTANCE:instance,PAPERLENS_TRANSLATION_DIR:process.env.PAPERLENS_TRANSLATION_DIR||path.join(libraryData,'translations'),...(executable?{PAPERLENS_CODEX_PATH:executable}:{})};
   // The service runs with Electron's bundled Node runtime; no system Node is needed.
   backend = utilityProcess.fork(path.join(runtime,'server.mjs'),['--production'],{cwd:userData,env,stdio:'pipe',serviceName:'砚读本地服务'});
   backend.stdout?.on('data',chunk=>log(chunk.toString().trim()));
