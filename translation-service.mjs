@@ -10,7 +10,7 @@ const MAX_PDF_BYTES = 50 * 1024 * 1024;
 const identifier = /^[a-f0-9-]{36}$/;
 const terminal = new Set(['done','error','cancelled','interrupted']);
 const stages = [
-  [/Translate/i,'正在逐段翻译全文…'], [/Layout|Paragraph/i,'正在识别分栏与段落…'],
+  [/Translate/i,'正在翻译与校验全文…'], [/Layout|Paragraph/i,'正在识别分栏与段落…'],
   [/Formula|Style/i,'正在保护公式与文字样式…'], [/Typeset/i,'正在将译文排回原版面…'],
   [/Font/i,'正在准备译文字体…'], [/Save|Generate|PDF/i,'正在处理 PDF 页面…'],
 ];
@@ -29,7 +29,21 @@ export function translationMessages(text, {targetLang, title = '', context = ''}
   ];
 }
 
-export function createTranslationService({root, translate, modelBusy = () => false, ensureRuntime = ensureTranslationRuntime, workerPath = path.join(root,'scripts','translate-pdf.py'), workerArgs = ['-u'], directory = process.env.PAPERLENS_TRANSLATION_DIR || path.join(os.homedir(),'.cache','paperlens','translations')}) {
+export function batchTranslationMessages(items, config) {
+  const messages=translationMessages('',config);
+  messages[0].content+='\nTranslate every item independently. Return ONLY a JSON object whose keys are the original numeric ids as strings and whose values are the complete translated texts. Preserve item boundaries, formula placeholders and table-cell separation. Do not merge, omit or add items.';
+  messages[1].content=JSON.stringify(items.map(({id,text})=>({id,text})));
+  return messages;
+}
+
+export function parseBatchTranslation(content, items) {
+  let result;
+  try{result=JSON.parse(content.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));}catch{throw new Error('模型未返回完整的批量译文，请重试');}
+  if(!result||Array.isArray(result)||Object.keys(result).length!==items.length||items.some(item=>typeof result[item.id]!=='string'))throw new Error('批量译文缺少段落或编号，请重试');
+  return items.map(item=>({id:item.id,text:assertPlaceholders(item.text,result[item.id])}));
+}
+
+export function createTranslationService({root, translate, ensureRuntime = ensureTranslationRuntime, workerPath = path.join(root,'scripts','translate-pdf.py'), workerArgs = ['-u'], directory = process.env.PAPERLENS_TRANSLATION_DIR || path.join(os.homedir(),'.cache','paperlens','translations')}) {
   const jobs = new Map();
   let active;
   const send = (res,code,data) => {res.writeHead(code,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
@@ -68,11 +82,40 @@ export function createTranslationService({root, translate, modelBusy = () => fal
       job.controller.signal.throwIfAborted();
       await new Promise((resolve,reject)=>{
         const child=spawn(python,[...workerArgs,workerPath,path.join(directory,job.id,'source.pdf'),path.join(directory,job.id),config.sourceLang,config.targetLang],{windowsHide:true,stdio:['pipe','pipe','pipe'],env:{...process.env,PYTHONIOENCODING:'utf-8'}});
-        job.child=child;let pending='';let complete=false;let failure;let rpc=Promise.resolve();
+        job.child=child;let pending='';let complete=false;let failure;let batchTimer;let batching=false;const queue=[];
         const fail=error=>{if(!failure){failure=error;stop(job);reject(error);}};
         const timer=setTimeout(()=>fail(new Error('全文翻译超过 2 小时，请拆分 PDF 后重试')),2*60*60*1000);
         const cancel=()=>fail(new Error('已取消全文翻译'));
         job.controller.signal.addEventListener('abort',cancel,{once:true});
+        async function reply(item,text){
+          job.controller.signal.throwIfAborted();
+          const part=item.cacheFile+'.'+job.id+'.'+item.id+'.part';
+          await fs.mkdir(path.dirname(item.cacheFile),{recursive:true});
+          await fs.writeFile(part,JSON.stringify({text}));await fs.rename(part,item.cacheFile);
+          job.controller.signal.throwIfAborted();
+          child.stdin.write(JSON.stringify({id:item.id,text})+'\n');
+        }
+        async function flush(){
+          if(batching||failure||!queue.length)return;
+          batching=true;
+          try{
+            const items=[];let chars=0;
+            while(queue.length&&items.length<8&&(!items.length||chars+queue[0].text.length<=10000)){const item=queue.shift();items.push(item);chars+=item.text.length;}
+            job.controller.signal.throwIfAborted();progress(job,job.progress,`正在合批翻译全文 · ${items.length} 段…`);
+            const content=await translate(items.length===1?translationMessages(items[0].text,config):batchTranslationMessages(items,config),config,job.controller.signal);
+            const results=items.length===1?[{id:items[0].id,text:assertPlaceholders(items[0].text,content)}]:parseBatchTranslation(content,items);
+            for(const result of results)await reply(items.find(item=>item.id===result.id),result.text);
+          }catch(error){fail(error);}
+          finally{batching=false;if(queue.length&&!failure)void flush();}
+        }
+        async function enqueue(event){
+          const cacheFile=path.join(directory,'.cache',createHash('sha256').update(config.cacheKey+event.text).digest('hex')+'.json');
+          let content;try{content=JSON.parse(await fs.readFile(cacheFile,'utf8')).text;}catch{}
+          const item={...event,cacheFile};
+          if(typeof content==='string')return reply(item,assertPlaceholders(event.text,content));
+          queue.push(item);
+          if(!batching&&!batchTimer)batchTimer=setTimeout(()=>{batchTimer=null;void flush();},300);
+        }
         child.stdout.setEncoding('utf8');
         child.stdout.on('data',chunk=>{
           pending+=chunk;
@@ -85,27 +128,14 @@ export function createTranslationService({root, translate, modelBusy = () => fal
             if(event.type==='complete'){complete=true;job.pages=event.pages;}
             if(event.type==='error')fail(new Error(event.error));
             if(event.type==='translate'){
-              rpc=rpc.then(async()=>{
-                job.controller.signal.throwIfAborted();
-                progress(job,job.progress,'正在逐段翻译全文…');
-                const cacheFile=path.join(directory,'.cache',createHash('sha256').update(config.cacheKey+event.text).digest('hex')+'.json');
-                let content;
-                try{content=JSON.parse(await fs.readFile(cacheFile,'utf8')).text;}catch{}
-                if(typeof content!=='string')content=await translate(translationMessages(event.text,config),config,job.controller.signal);
-                const text=assertPlaceholders(event.text,content);
-                job.controller.signal.throwIfAborted();
-                await fs.mkdir(path.dirname(cacheFile),{recursive:true});
-                const part=cacheFile+'.'+job.id+'.part';
-                await fs.writeFile(part,JSON.stringify({text}));await fs.rename(part,cacheFile);
-                child.stdin.write(JSON.stringify({id:event.id,text})+'\n');
-              }).catch(fail);
+              void enqueue(event).catch(fail);
             }
           }
         });
         // Drain diagnostics without recording paper text or provider credentials.
         child.stderr.on('data',()=>{});child.stdin.on('error',()=>{});
         child.once('error',fail);
-        child.once('close',code=>{clearTimeout(timer);job.controller.signal.removeEventListener('abort',cancel);job.child=null;if(failure)return;if(code!==0||!complete)return reject(new Error('排版引擎未完成翻译，请重试或检查 PDF 是否为扫描件'));resolve();});
+        child.once('close',code=>{clearTimeout(timer);clearTimeout(batchTimer);job.controller.signal.removeEventListener('abort',cancel);job.child=null;if(failure)return;if(code!==0||!complete)return reject(new Error('排版引擎未完成翻译，请重试或检查 PDF 是否为扫描件'));resolve();});
       });
       job.controller.signal.throwIfAborted();
       for(const name of ['translated.pdf','bilingual.pdf']){const file=await fs.open(path.join(directory,job.id,name),'r');try{const magic=Buffer.alloc(5);await file.read(magic,0,5,0);if(magic.toString()!=='%PDF-')throw new Error('译文 PDF 无效');}finally{await file.close();}}
@@ -124,7 +154,7 @@ export function createTranslationService({root, translate, modelBusy = () => fal
     if(req.headers.origin && req.headers.origin!==`http://${req.headers.host}`){send(res,403,{error:'请求来源无效'});return true;}
     try {
       if(url.pathname==='/api/translations' && req.method==='POST'){
-        if(active||modelBusy()){send(res,409,{error:'阅读模型正在处理其他请求，请完成或取消后再翻译'});return true;}
+        if(active){send(res,409,{error:'已有全文翻译正在进行，请完成或取消后再翻译另一篇'});return true;}
         if(!req.headers['content-type']?.includes('application/json')){send(res,415,{error:'需要 JSON 数据'});return true;}
         // Reserve the slot while receiving and validating the upload.
         const reservation={};active=reservation;

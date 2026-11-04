@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCodexArgs, collectEvent, conversationPrompt } from '../codex-bridge.mjs';
+import { buildCodexArgs, collectEvent, conversationPrompt, acquireCodexLane, isCodexBusy } from '../codex-bridge.mjs';
 
 test('Codex runs through stdin with existing login and document-only permissions',()=>{
   const args=buildCodexArgs('example-model');
@@ -21,4 +21,15 @@ test('event parsing requires a successful completed turn and keeps the final ans
 test('paper contents are passed as data and preserve Chinese characters',()=>{
   const prompt=conversationPrompt([{role:'system',content:'根据原文输出 JSON'},{role:'user',content:'论文：中文与 English。'}]);
   assert.match(prompt,/=== SYSTEM ===/);assert.match(prompt,/根据原文输出 JSON/);assert.match(prompt,/论文：中文与 English。/);
+});
+
+test('chat and full-paper translation can run together and release only their own request slot',()=>{
+  const translation=acquireCodexLane('translation');let reading;
+  try{
+    reading=acquireCodexLane('reading');assert.ok(isCodexBusy('translation'));assert.ok(isCodexBusy('reading'));
+    assert.throws(()=>acquireCodexLane('translation'),/全文翻译/);assert.throws(()=>acquireCodexLane('reading'),/阅读请求/);
+    reading();assert.equal(isCodexBusy('reading'),false);assert.equal(isCodexBusy('translation'),true);
+    const next=acquireCodexLane('reading');reading();assert.equal(isCodexBusy('reading'),true);next();
+  }finally{reading?.();translation();}
+  assert.equal(isCodexBusy(),false);
 });

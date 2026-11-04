@@ -85,7 +85,7 @@ npm run desktop:pack
 
 ![全文翻译与双语 PDF 下载](docs/images/full-translation.png)
 
-打开已导入的 PDF，点击阅读页上方的 **全文翻译**，选择英文 → 中文或中文 → 英文，再点击 **翻译全文**。翻译复用当前选择的 Codex 或模型 API，完成后可下载译文 PDF 和双语对照 PDF。原文件保留，支持查看进度、取消任务和刷新后继续查看。
+打开已导入的 PDF，点击阅读页上方的 **全文翻译**，选择英文 → 中文或中文 → 英文，再点击 **翻译全文**。翻译复用当前选择的 Codex 或模型 API，完成后可下载译文 PDF 和双语对照 PDF。原文件保留，支持查看进度、取消任务和刷新后继续查看。翻译与侧栏聊天可同时使用；任务窗默认收起，可拖动、隐藏并记住位置，在侧栏「后台任务」重新打开。相邻段落合批请求模型，已完成段落从本机缓存复用。
 
 翻译排版由独立安装的 [BabelDOC](https://github.com/funstory-ai/BabelDOC) 引擎处理。首次使用前安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)，应用会自动准备隔离的 Python 3.12 环境、版面模型与字体；也可提前运行：
 

@@ -1,14 +1,18 @@
+import {attachFloatingPanel,panelGrip} from './floating-panel.js';
+
 export function createTaskQueue(ctx) {
   const {state,extractPaper,savePaper,persist,analyze,render,toast,e,ic,isConfigured,openPaper}=ctx;
   let running=false;let expanded=false;
+  let floating;
   const owner=sessionStorage.getItem('paperlens-task-owner')||crypto.randomUUID();sessionStorage.setItem('paperlens-task-owner',owner);
   const active=job=>['queued','extracting','analyzing'].includes(job.status);
   function update(){
-    let dock=document.querySelector('#task-dock');if(!dock){dock=document.createElement('aside');dock.id='task-dock';dock.setAttribute('aria-label','论文整理任务');document.body.append(dock);}
+    let dock=document.querySelector('#task-dock');if(!dock){dock=document.createElement('aside');dock.id='task-dock';dock.setAttribute('aria-label','论文整理任务');document.body.append(dock);floating=attachFloatingPanel(dock);}
     const jobs=state.jobs;if(!jobs.length){dock.innerHTML='';return;}
     const busy=jobs.filter(active).length;
-    dock.innerHTML=`<button class="task-dock-heading" data-task-toggle="true">${ic(busy?'loader-circle':'list-checks',busy?'spin':'')}<strong>${busy?`${busy} 个整理任务进行中`:'论文整理任务'}</strong><span>${expanded?'收起':'展开'}</span></button>${expanded?`<div class="task-list">${jobs.map(j=>`<div class="task-item"><strong>${e(j.name)}</strong><p>${e(j.label)}</p>${active(j)?`<progress max="100" value="${j.progress||0}"></progress>`:''}<div>${j.paperId?`<button class="text-button" data-task-open="${j.id}">阅读原文</button>`:''}${active(j)?`<button class="text-button" data-task-cancel="${j.id}">取消</button>`:['error','cancelled','interrupted'].includes(j.status)?`<button class="text-button" data-task-retry="${j.id}">重试</button>`:''}${!active(j)?`<button class="text-button" data-task-dismiss="${j.id}">移除记录</button>`:''}</div></div>`).join('')}</div>${busy?'<p class="task-page-note">整理期间保持此页面打开；中断后可重试。</p>':''}`:''}`;
-    dock.querySelectorAll('[data-lucide]').forEach(el=>{el.textContent=el.dataset.lucide==='loader-circle'?'◌':'☷';el.removeAttribute('data-lucide');});
+    dock.classList.toggle('is-collapsed',!expanded);
+    dock.innerHTML=`<div class="floating-panel-header" data-panel-drag>${panelGrip}<button class="floating-panel-title" data-task-toggle="true">${ic(busy?'loader-circle':'list-checks',busy?'spin':'')}<strong>${busy?`${busy} 个整理任务`:'论文整理任务'}</strong></button><button class="floating-panel-control" data-task-toggle="true" data-panel-no-drag aria-label="${expanded?'收起':'展开'}整理任务">${ic(expanded?'chevron-down':'chevron-up')}</button><button class="floating-panel-control" data-task-hide="true" data-panel-no-drag aria-label="隐藏整理任务窗">${ic('minus')}</button></div>${expanded?`<div class="task-list">${jobs.map(j=>`<div class="task-item"><strong>${e(j.name)}</strong><p>${e(j.label)}</p>${active(j)?`<progress max="100" value="${j.progress||0}"></progress>`:''}<div>${j.paperId?`<button class="text-button" data-task-open="${j.id}">阅读原文</button>`:''}${active(j)?`<button class="text-button" data-task-cancel="${j.id}">取消</button>`:['error','cancelled','interrupted'].includes(j.status)?`<button class="text-button" data-task-retry="${j.id}">重试</button>`:''}${!active(j)?`<button class="text-button" data-task-dismiss="${j.id}">移除记录</button>`:''}</div></div>`).join('')}</div>${busy?'<p class="task-page-note">可隐藏任务窗，在侧栏「后台任务」重新打开。</p>':''}`:''}`;
+    ctx.refreshIcons?.();floating?.layout();
   }
   async function status(job,status,label,progress=job.progress){job.status=status;job.label=label;job.progress=progress;update();if(job.paperId){const p=state.papers.find(p=>p.id===job.paperId);if(p)await persist(p,{task:{id:job.id,status,label,progress,owner,lease:Date.now()+45000}});}}
   async function pump(){
@@ -16,7 +20,7 @@ export function createTaskQueue(ctx) {
     try{
       while(true){
         const job=state.jobs.find(j=>j.status==='queued');if(!job)break;
-        if(state.analysisId||state.chatBusy||state.visionBusy||state.translationBusy||state.fullTranslationBusy){setTimeout(pump,800);break;}
+        if(state.analysisId||state.chatBusy||state.visionBusy||state.translationBusy){setTimeout(pump,800);break;}
         job.controller=new AbortController();
         try{
           let p=state.papers.find(p=>p.id===job.paperId);
@@ -40,7 +44,7 @@ export function createTaskQueue(ctx) {
     if(state.jobs.some(j=>j.paperId===p.id&&active(j)))return toast('这篇论文已经在整理队列中');
     const job={id:crypto.randomUUID(),paperId:p.id,name:p.filename,status:'queued',label:'等待后台解读',progress:0};
     await persist(p,latest=>{if(latest.task&&['queued','analyzing'].includes(latest.task.status)&&latest.task.owner!==owner&&latest.task.lease>Date.now())throw new Error('另一页面正在解读这篇论文');return {task:{id:job.id,status:'queued',label:job.label,owner,lease:Date.now()+45000}};});
-    state.jobs.push(job);expanded=true;update();pump();
+    state.jobs.push(job);expanded=false;update();floating?.show();pump();
   }
   function importFiles(files){
     for(const file of Array.from(files)){
@@ -49,11 +53,12 @@ export function createTaskQueue(ctx) {
       if(state.jobs.some(j=>active(j)&&j.name===file.name&&j.file?.size===file.size))continue;
       state.jobs.push({id:crypto.randomUUID(),file,name:file.name,status:'queued',label:'等待读取原文',progress:0});
     }
-    expanded=true;ctx.closeModal?.();document.querySelector('#modal-root').innerHTML='';update();pump();
+    expanded=false;ctx.closeModal?.();document.querySelector('#modal-root').innerHTML='';update();floating?.show();pump();
   }
   function cancel(job){if(!job||!active(job))return;if(job.controller)job.controller.abort();else status(job,'cancelled','已取消等待');}
   async function handleClick(button){if(!button)return false;
     if(button.dataset.taskToggle){expanded=!expanded;update();return true;}
+    if(button.dataset.taskHide){floating?.hide();return true;}
     for(const key of ['taskOpen','taskCancel','taskRetry','taskDismiss'])if(button.dataset[key]){
       const job=state.jobs.find(j=>j.id===button.dataset[key]);if(!job)return true;
       if(key==='taskOpen')await openPaper(job.paperId,'original');if(key==='taskCancel')cancel(job);
@@ -63,5 +68,5 @@ export function createTaskQueue(ctx) {
   }
   setInterval(()=>{for(const job of state.jobs.filter(active)){if(job.paperId){const p=state.papers.find(p=>p.id===job.paperId);if(p)persist(p,{task:{id:job.id,status:job.status,label:job.label,progress:job.progress,owner,lease:Date.now()+45000}}).catch(ctx.err);}}},15000);
   window.addEventListener('beforeunload',event=>{if(state.jobs.some(active)){event.preventDefault();event.returnValue='';}});
-  return {shouldRecover:p=>!p.task.owner||p.task.owner===owner||p.task.lease<Date.now(),update,enqueue,importFiles,handleClick,cancelPaper:id=>state.jobs.filter(j=>j.paperId===id).forEach(cancel),recover:p=>state.jobs.push({id:p.task.id||crypto.randomUUID(),paperId:p.id,name:p.filename,status:p.task.status,label:p.task.label||'上次整理中断，可继续解读',progress:0})};
+  return {show:()=>{update();if(!state.jobs.length)return false;expanded=true;update();floating?.show();return true;},shouldRecover:p=>!p.task.owner||p.task.owner===owner||p.task.lease<Date.now(),update,enqueue,importFiles,handleClick,cancelPaper:id=>state.jobs.filter(j=>j.paperId===id).forEach(cancel),recover:p=>state.jobs.push({id:p.task.id||crypto.randomUUID(),paperId:p.id,name:p.filename,status:p.task.status,label:p.task.label||'上次整理中断，可继续解读',progress:0})};
 }

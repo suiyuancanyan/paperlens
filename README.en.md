@@ -75,7 +75,7 @@ optional server configuration.
 
 ![Full-paper translation and bilingual PDF downloads](docs/images/full-translation.png)
 
-Open an imported PDF and choose **全文翻译** in the reader toolbar. Select English → Chinese or Chinese → English, then start translation. PaperLens uses the currently selected Codex login or compatible model API and generates a translated-only PDF and a bilingual PDF. Progress, cancellation and status recovery after a page refresh are supported.
+Open an imported PDF and choose **全文翻译** in the reader toolbar. Select English → Chinese or Chinese → English, then start translation. PaperLens uses the currently selected Codex login or compatible model API and generates a translated-only PDF and a bilingual PDF. Progress, cancellation and status recovery after a page refresh are supported. Sidebar chat remains available during translation. Compact task panels can be dragged, hidden and reopened from the sidebar; their positions are remembered. Paragraph batching reduces model requests, and completed translations are cached locally.
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) before the first translation. PaperLens prepares an isolated Python 3.12 environment and installs [BabelDOC](https://github.com/funstory-ai/BabelDOC) separately; model assets and fonts are downloaded on first use. To prepare the environment in advance, run `npm run translation:setup`. Ordinary reading does not require Python.
 

@@ -6,6 +6,7 @@ is copied here, and model credentials never enter this worker's protocol.
 import asyncio
 import json
 import os
+import queue
 import shutil
 import sys
 import threading
@@ -25,9 +26,33 @@ def emit(event):
 def main():
     import pymupdf
     from babeldoc.docvision.doclayout import DocLayoutModel
+    from babeldoc.format.pdf import high_level as pdf_engine
     from babeldoc.format.pdf.high_level import async_translate
     from babeldoc.format.pdf.translation_config import TranslationConfig, WatermarkOutputMode
-    from babeldoc.translator.translator import BaseTranslator
+    from babeldoc.translator.translator import BaseTranslator, set_translate_rate_limiter
+
+    if os.name == 'nt':
+        # The whole engine already runs in a disposable process controlled by
+        # PaperLens. Avoid nested Windows processes for tiny font/save tasks:
+        # their startup can hit BabelDOC's 60/120-second fallbacks repeatedly.
+        from babeldoc.format.pdf.document_il.backend.pdf_creater import PDFCreater
+
+        class WorkerPDFCreater(PDFCreater):
+            @staticmethod
+            def subset_fonts_in_subprocess(pdf, translation_config, tag):
+                translation_config.raise_if_cancelled()
+                pdf.subset_fonts(fallback=False)
+                return pdf
+
+            @staticmethod
+            def save_pdf_with_timeout(pdf, output_path, translation_config, **options):
+                translation_config.raise_if_cancelled()
+                pdf.save(output_path, garbage=options.get('garbage', 1),
+                         deflate=options.get('deflate', True), clean=False,
+                         deflate_fonts=options.get('deflate_fonts', True))
+                return False  # Saved without optional content-stream cleaning.
+
+        pdf_engine.PDFCreater = WorkerPDFCreater
 
     source, destination, lang_in, lang_out = sys.argv[1:]
     destination = Path(destination)
@@ -44,28 +69,55 @@ def main():
         def __init__(self):
             super().__init__(lang_in, lang_out, ignore_cache=True)
             self.count = 0
+            self.pending = {}
+            self.pending_lock = threading.Lock()
+            threading.Thread(target=self.receive, daemon=True).start()
+
+        def receive(self):
+            buffer = b''
+            try:
+                while chunk := os.read(sys.stdin.fileno(), 65536):
+                    buffer += chunk
+                    while b'\n' in buffer:
+                        line, buffer = buffer.split(b'\n', 1)
+                        response = json.loads(line.decode('utf-8'))
+                        with self.pending_lock:
+                            waiter = self.pending.get(response.get('id'))
+                        if waiter is not None:
+                            waiter.put_nowait(response)
+            finally:
+                with self.pending_lock:
+                    for waiter in self.pending.values():
+                        if waiter.empty():
+                            waiter.put_nowait({'error':'翻译服务已断开'})
 
         def do_llm_translate(self, text, rate_limit_params=None):
             raise NotImplementedError
 
         def do_translate(self, text, rate_limit_params=None):
-            self.count += 1
-            emit({'type':'translate', 'id':self.count, 'text':text})
-            line = sys.stdin.readline()
-            if not line:
-                raise RuntimeError('翻译服务已断开')
-            response = json.loads(line)
-            if response.get('id') != self.count or response.get('error'):
-                raise RuntimeError(response.get('error', '翻译响应编号无效'))
-            return response['text']
+            waiter = queue.Queue(maxsize=1)
+            with self.pending_lock:
+                self.count += 1
+                request_id = self.count
+                self.pending[request_id] = waiter
+            try:
+                emit({'type':'translate', 'id':request_id, 'text':text})
+                response = waiter.get(timeout=900)
+                if response.get('id') != request_id or response.get('error'):
+                    raise RuntimeError(response.get('error', '翻译响应编号无效'))
+                return response['text']
+            finally:
+                with self.pending_lock:
+                    self.pending.pop(request_id, None)
 
     emit({'type':'progress', 'progress':3, 'label':'正在准备版面模型与字体，首次运行需要下载…'})
+    set_translate_rate_limiter(30)
     config = TranslationConfig(
         translator=PaperLensTranslator(), input_file=source,
         lang_in=lang_in, lang_out=lang_out,
         doc_layout_model=DocLayoutModel.load_available(),
         output_dir=destination, working_dir=destination / 'work',
-        no_dual=False, no_mono=False, qps=2, pool_max_workers=1,
+        no_dual=False, no_mono=False, qps=30, pool_max_workers=8,
         watermark_output_mode=WatermarkOutputMode.NoWatermark,
         auto_extract_glossary=False, save_auto_extracted_glossary=False,
         disable_rich_text_translate=True, skip_scanned_detection=False,

@@ -41,7 +41,7 @@ async function persist(p, changes, label = '') {
   Object.assign(live,latest);if(pending!==null)live.notes=pending;return live;
 }
 const tools=createReaderTools({state,current,persist,render,modal,closeModal,toast,err,ic,e,modelCall,isConfigured,getPaper});
-const tasks=createTaskQueue({state,extractPaper,savePaper,persist,analyze,render,toast,err,e,ic,isConfigured,openPaper});
+const tasks=createTaskQueue({state,extractPaper,savePaper,persist,analyze,render,toast,err,e,ic,isConfigured,openPaper,refreshIcons});
 const explore=createExplore({state,current,e,ic,render,modal,closeModal,toast,persist,tools,visualPixels,refreshIcons});
 const fullTranslation=createFullTranslation({state,current,getFile,persist,modal,toast,e,ic,isConfigured,settingsModal,download,refreshIcons});
 function safeRender(){if(!document.activeElement?.matches('input,textarea,select'))render();else tasks.update();}
@@ -60,6 +60,7 @@ function sidebar() {
     </nav>
     <div class="sidebar-divider"></div>
     <div class="nav-label">阅读工具</div>
+    <button class="nav-item" data-action="show-tasks">${ic('list-checks')}<span>后台任务</span></button>
     <button class="nav-item" data-action="settings">${ic('sliders-horizontal')}<span>模型与阅读设置</span></button>
     <button class="nav-item" data-action="help">${ic('circle-help')}<span>使用指南</span></button>
     <div class="sidebar-bottom">
@@ -209,7 +210,7 @@ async function modelCall(messages, config = {}, signal) {
 function settingsValues() { const form = document.querySelector('#settings-form'); const data = new FormData(form); return { provider:String(data.get('provider') || 'codex'), codexModel:String(data.get('codexModel') || '').trim() || DEFAULT_CODEX_MODEL, base:String(data.get('base') || '').trim(), model:String(data.get('model') || '').trim(), key:String(data.get('key') || '').trim(), language:String(data.get('language') || '中文') }; }
 function validConfig(config) { if (config.provider === 'codex') { if (!state.codex.available) throw new Error(state.codex.message); return; } if (!config.base && !config.model && state.serverConfigured) return; if (!config.base || !config.model) throw new Error('请填写模型服务地址和模型名称'); const url = new URL(config.base); if (!['http:','https:'].includes(url.protocol)) throw new Error('服务地址需要以 http:// 或 https:// 开头'); }
 async function analyze(p, silent = false, signal, onProgress = () => {}) {
-  if (state.analysisId || state.visionBusy || state.chatBusy || state.translationBusy || state.fullTranslationBusy) { throw new Error('已有阅读请求正在处理，请稍后重试'); }
+  if (state.analysisId || state.visionBusy || state.chatBusy || state.translationBusy) { throw new Error('已有阅读请求正在处理，请稍后重试'); }
   if (!isConfigured()) { settingsModal(); return; }
   if (p.type === 'demo') { toast('示例已包含精选解读。请导入你的论文使用 AI。'); return; }
   const context = paperContext(p);
@@ -319,7 +320,7 @@ async function openVisual(paperId,visualId) {
 
 async function readVisual() {
   const session=state.visualSession;if(!session)return;
-  if(state.visionBusy||state.analysisId||state.chatBusy||state.translationBusy || state.fullTranslationBusy)return toast('已有阅读请求正在处理，请稍候');
+  if(state.visionBusy||state.analysisId||state.chatBusy||state.translationBusy)return toast('已有阅读请求正在处理，请稍候');
   if(!isConfigured())return toast('请先在模型与阅读设置中连接服务',true);
   if(!session.dataUrl)throw new Error('高清原图仍在加载，请稍候重试');
   const question=document.querySelector('#visual-question').value.trim()||'请解读这张图。';
@@ -346,7 +347,7 @@ async function downloadVisual() {
 }
 
 async function ask(question) {
-  const p = current(); if (!p || !question.trim() || state.chatBusy) return; if(state.visionBusy||state.analysisId||state.chatBusy||state.translationBusy || state.fullTranslationBusy)return toast('已有阅读请求正在处理，请稍候');
+  const p = current(); if (!p || !question.trim() || state.chatBusy) return; if(state.visionBusy||state.analysisId||state.chatBusy||state.translationBusy)return toast('已有阅读请求正在处理，请稍候');
   if (!isConfigured()) return settingsModal();
   if (p.type === 'demo') return toast('请先导入你的论文，再使用论文对话');
   const context = paperContext(p); if (context.length > 180000) return toast('论文文字超过 18 万字符，请拆分后对话',true);
@@ -437,6 +438,9 @@ const actions = {
   analyze:() => analyze(current()),
   read:async () => { const p = current(); await persist(p,latest=>({read:!latest.read})); render(); },
   export:exportModal,
+  'show-tasks':()=>{const hasTasks=tasks.show();const hasTranslation=fullTranslation.showDock();if(!hasTasks&&!hasTranslation)toast('当前没有后台任务');},
+  'toggle-full-translation-dock':()=>fullTranslation.toggleDock(),
+  'hide-full-translation-dock':()=>fullTranslation.hideDock(),
   'full-translate':()=>fullTranslation.open(),
   'show-full-translation':()=>fullTranslation.show(),
   'start-full-translation':()=>fullTranslation.start(),
@@ -444,7 +448,7 @@ const actions = {
   'download-full-mono':()=>fullTranslation.downloadResult('mono'),
   'download-full-dual':()=>fullTranslation.downloadResult('dual'),
   'export-logic':() => download(logicSVG(current()),safeName(current())+'-研究逻辑.svg','image/svg+xml'),
-  delete:() => { const p=current(); if (state.analysisId === p.id || state.chatBusy || state.visionBusy || state.fullTranslationBusy) return toast('请等待当前解读或对话完成后再移除'); modal('移除这篇论文？',window.paperlensDesktop?'将同时移除此应用中的原文件、解读与笔记。':'将同时移除此浏览器中的原文件、解读与笔记。',`<div class="delete-title">${e(p.analysis.title)}</div><div class="modal-footer"><button class="secondary" data-action="close-modal">保留论文</button><button class="danger-button" data-delete-confirm="${p.id}">确认移除</button></div>`,'delete-modal'); },
+  delete:() => { const p=current(); if (state.analysisId === p.id || state.chatBusy || state.visionBusy || p.translation?.status === 'running') return toast('请等待当前解读或对话完成后再移除'); modal('移除这篇论文？',window.paperlensDesktop?'将同时移除此应用中的原文件、解读与笔记。':'将同时移除此浏览器中的原文件、解读与笔记。',`<div class="delete-title">${e(p.analysis.title)}</div><div class="modal-footer"><button class="secondary" data-action="close-modal">保留论文</button><button class="danger-button" data-delete-confirm="${p.id}">确认移除</button></div>`,'delete-modal'); },
   'prev-page':() => { state.page=Math.max(1,state.page-1); render(); },
   'next-page':() => { state.page=Math.min(current().pages.length,state.page+1); render(); },
   'zoom-in':() => { state.zoom=Math.min(2,state.zoom+0.15); render(); },

@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
-import { getCodexStatus, runCodex, isCodexBusy } from './codex-bridge.mjs';
+import { getCodexStatus, runCodex } from './codex-bridge.mjs';
 import { createTranslationService } from './translation-service.mjs';
 import { DEFAULT_CODEX_MODEL } from './shared/config.js';
 import { decodeVisionImages } from './vision-input.mjs';
@@ -23,8 +23,8 @@ export function resolveEndpoint(value) {
   return url.href;
 }
 
-const translations=createTranslationService({root,modelBusy:()=>isCodexBusy()||controllers.size>0,translate:async(messages,config,signal)=>{
-  if(config.provider==='codex')return runCodex(messages,{model:config.codexModel||process.env.PAPERLENS_CODEX_MODEL||DEFAULT_CODEX_MODEL,signal});
+const translations=createTranslationService({root,translate:async(messages,config,signal)=>{
+  if(config.provider==='codex')return runCodex(messages,{model:config.codexModel||process.env.PAPERLENS_CODEX_MODEL||DEFAULT_CODEX_MODEL,signal,lane:'translation'});
   const base=config.base||process.env.PAPERLENS_API_BASE;
   const model=config.model||process.env.PAPERLENS_MODEL;
   const key=config.key||process.env.PAPERLENS_API_KEY;
@@ -50,7 +50,6 @@ const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST') return send(res, 405, { error: '请使用 POST 请求' });
     if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) return send(res, 403, { error: '请求来源无效' });
     if (!req.headers['content-type']?.includes('application/json')) return send(res, 415, { error: '需要 JSON 数据' });
-    if(translations.isBusy())return send(res,409,{error:'正在全文翻译，请完成或取消后再使用阅读模型'});
     let controller;
     try {
       const chunks = []; let bytes = 0;

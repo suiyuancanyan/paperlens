@@ -5,13 +5,13 @@ import {once} from 'node:events';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {createTranslationService,assertPlaceholders,translationMessages} from '../translation-service.mjs';
+import {createTranslationService,assertPlaceholders,translationMessages,parseBatchTranslation} from '../translation-service.mjs';
 
 const pdf=Buffer.from('%PDF-1.4\nSynthetic translation protocol fixture.\n%%EOF');
 const input={pdf:pdf.toString('base64'),provider:'api',key:'fixture-secret-never-save',base:'http://localhost',model:'fixture',sourceLang:'en',targetLang:'zh-CN'};
-async function fixture(t,translate=async()=> '结果为 {v1}。'){
+async function fixture(t,translate=async()=> '结果为 {v1}。',worker='translation-worker.mjs'){
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'paperlens-translation-test-'));
-  const options={root:process.cwd(),directory,translate,ensureRuntime:async()=>process.execPath,workerPath:path.resolve('tests/fixtures/translation-worker.mjs'),workerArgs:[]};
+  const options={root:process.cwd(),directory,translate,ensureRuntime:async()=>process.execPath,workerPath:path.resolve('tests/fixtures',worker),workerArgs:[]};
   let service=createTranslationService(options);
   const server=http.createServer(async(req,res)=>{if(!await service.handle(req,res)){res.writeHead(404);res.end();}});
   server.listen(0,'127.0.0.1');await once(server,'listening');const base=`http://127.0.0.1:${server.address().port}`;
@@ -64,4 +64,17 @@ test('retries reuse completed paragraphs while changes to the selected model inv
   const first=await(await f.post()).json();assert.equal((await f.finish(first.id)).status,'done');
   const second=await(await f.post()).json();assert.equal((await f.finish(second.id)).status,'done');assert.equal(calls,1);
   const third=await(await f.post({...input,model:'another-model'})).json();assert.equal((await f.finish(third.id)).status,'done');assert.equal(calls,2);
+});
+
+test('six queued paragraphs share one model call and remain correctly matched to their source ids',async t=>{
+  let calls=0;
+  const f=await fixture(t,async messages=>{calls++;const items=JSON.parse(messages[1].content);assert.equal(items.length,6);return JSON.stringify(Object.fromEntries(items.reverse().map(item=>[item.id,`段落 ${item.id}：结果 {v1}。`])));},'translation-batch-worker.mjs');
+  const job=await(await f.post()).json();assert.equal((await f.finish(job.id)).status,'done');assert.equal(calls,1);
+  const again=await(await f.post()).json();assert.equal((await f.finish(again.id)).status,'done');assert.equal(calls,1);
+});
+
+test('batch validation rejects missing paragraphs and damaged formulas',()=>{
+  const items=[{id:1,text:'Result {v1}.'},{id:2,text:'Other {v2}.'}];
+  assert.throws(()=>parseBatchTranslation('{"1":"结果 {v1}。"}',items),/缺少段落/);
+  assert.throws(()=>parseBatchTranslation('{"1":"结果 {v1}。","2":"其他 {v3}。"}',items),/公式/);
 });

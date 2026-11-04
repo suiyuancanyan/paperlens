@@ -1,8 +1,10 @@
 import './full-translation.css';
+import {attachFloatingPanel,panelGrip} from './floating-panel.js';
 
 export function createFullTranslation({state,current,getFile,persist,modal,toast,e,ic,isConfigured,settingsModal,download,refreshIcons}) {
   const records=new Map();
   let panelPaper=null;
+  let floating;let dockExpanded=false;
   const running=job=>job?.status==='running';
   async function request(url,options){const response=await fetch(url,options);const data=await response.json();if(!response.ok)throw new Error(data.error||'无法连接全文翻译服务');return data;}
   function content(p){
@@ -18,9 +20,10 @@ export function createFullTranslation({state,current,getFile,persist,modal,toast
     if(container&&panelPaper){const p=state.papers.find(p=>p.id===panelPaper);if(p)container.innerHTML=content(p);}
     const job=[...records.values()].find(running);
     let dock=document.querySelector('#full-translation-dock');
-    if(!dock){dock=document.createElement('aside');dock.id='full-translation-dock';document.body.append(dock);}
-    dock.innerHTML=job?`<button data-action="show-full-translation"><span>${ic('languages')}</span><div><strong>全文翻译 · ${Math.round(job.progress||0)}%</strong><small>${e(job.label)}</small></div>${ic('chevron-up')}</button>`:'';
-    refreshIcons();
+    if(!dock){dock=document.createElement('aside');dock.id='full-translation-dock';dock.setAttribute('aria-label','全文翻译任务');document.body.append(dock);floating=attachFloatingPanel(dock);}
+    dock.classList.toggle('is-collapsed',!dockExpanded);
+    dock.innerHTML=job?`<div class="floating-panel-header" data-panel-drag>${panelGrip}<button class="floating-panel-title" data-action="show-full-translation">${ic('languages')}<strong>全文翻译 · ${Math.round(job.progress||0)}%</strong></button><button class="floating-panel-control" data-action="toggle-full-translation-dock" data-panel-no-drag aria-label="${dockExpanded?'收起':'展开'}翻译任务">${ic(dockExpanded?'chevron-down':'chevron-up')}</button><button class="floating-panel-control" data-action="hide-full-translation-dock" data-panel-no-drag aria-label="隐藏翻译任务窗">${ic('minus')}</button></div>${dockExpanded?`<div class="floating-panel-body"><p>${e(job.label)}</p><progress max="100" value="${job.progress||0}"></progress><p>翻译在后台继续，可同时聊天。</p></div>`:''}`:'';
+    refreshIcons();floating?.layout();
   }
   async function watch(p,initial){
     if(records.get(p.id)?.watching)return;
@@ -48,7 +51,7 @@ export function createFullTranslation({state,current,getFile,persist,modal,toast
   }
   async function start(){
     const p=state.papers.find(p=>p.id===panelPaper);if(!p)return;
-    if(state.fullTranslationBusy||state.analysisId||state.chatBusy||state.visionBusy||state.translationBusy)return toast('阅读模型正在处理其他请求，请稍后重试');
+    if(state.fullTranslationBusy)return toast('已有全文翻译正在进行');
     if(!isConfigured())return settingsModal();
     const direction=document.querySelector('#full-translation-direction')?.value||'en:zh-CN';
     const [sourceLang,targetLang]=direction.split(':');
@@ -59,6 +62,7 @@ export function createFullTranslation({state,current,getFile,persist,modal,toast
       const pdf=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=reject;reader.readAsDataURL(file);});
       const job=await request('/api/translations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...state.settings,key:state.key,pdf,sourceLang,targetLang,title:p.analysis.title,context:p.pages.slice(0,2).map(page=>page.text).join('\n').slice(0,4000)})});
       records.set(p.id,job);
+      floating?.show();
       await persist(p,{translation:{id:job.id,status:job.status,targetLang,progress:0,label:job.label}});
       void watch(p,job);
     }catch(error){state.fullTranslationBusy=false;toast(error.message,true);}
@@ -71,5 +75,5 @@ export function createFullTranslation({state,current,getFile,persist,modal,toast
     download(await response.arrayBuffer(),p.analysis.title.replace(/[\\/:*?"<>|]/g,'').slice(0,90)+(kind==='mono'?'-译文':'-双语对照')+'.pdf','application/pdf');
   }
   async function recover(){for(const p of state.papers.filter(p=>p.translation?.status==='running')){try{const job=await request('/api/translations/'+p.translation.id);void watch(p,job);}catch{/* The translation panel offers a retry when opened. */}}}
-  return {open,start,cancel,downloadResult,recover,show:()=>open(state.papers.find(p=>running(records.get(p.id)))||current())};
+  return {open,start,cancel,downloadResult,recover,toggleDock:()=>{dockExpanded=!dockExpanded;update();},hideDock:()=>floating?.hide(),showDock:()=>{update();floating?.show();return [...records.values()].some(running);},show:()=>open(state.papers.find(p=>running(records.get(p.id)))||current())};
 }

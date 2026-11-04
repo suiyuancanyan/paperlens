@@ -10,8 +10,15 @@ const execFileAsync = promisify(execFile);
 const executable = () => process.env.PAPERLENS_CODEX_PATH || 'codex';
 let cachedStatus;
 let checking;
-let active = false;
-export const isCodexBusy = () => active;
+const active = new Set();
+export const isCodexBusy = lane => lane ? active.has(lane) : active.size > 0;
+export function acquireCodexLane(lane = 'reading') {
+  if (!['reading','translation'].includes(lane)) throw new Error('无效的阅读请求类型');
+  if (active.has(lane)) throw new Error(lane === 'translation' ? '全文翻译正在处理另一段文字，请稍后重试' : 'Codex 正在处理另一项阅读请求，请稍后重试');
+  active.add(lane);
+  let released = false;
+  return () => { if (!released) { released = true; active.delete(lane); } };
+}
 
 export async function getCodexStatus({ refresh = false } = {}) {
   if (!refresh && cachedStatus && Date.now() - cachedStatus.at < 30_000) return cachedStatus.value;
@@ -60,11 +67,10 @@ function friendlyError(text) {
   return 'Codex 未完成本次解读，请检查 Codex 登录与网络连接后重试';
 }
 
-export async function runCodex(messages, { model = DEFAULT_CODEX_MODEL, images = [], signal, timeoutMs = 240000 } = {}) {
-  if (active) throw new Error('Codex 正在处理另一项阅读请求，请稍后重试');
+export async function runCodex(messages, { model = DEFAULT_CODEX_MODEL, images = [], signal, timeoutMs = 240000, lane = 'reading' } = {}) {
   if (model && (typeof model !== 'string' || !/^[a-zA-Z0-9._:/-]{1,120}$/.test(model))) throw new Error('Codex 模型名称格式无效');
   if (signal?.aborted) throw new Error('已取消本次 Codex 请求');
-  active = true;
+  const release = acquireCodexLane(lane);
   let directory;
   try {
     const status = await getCodexStatus();
@@ -103,7 +109,7 @@ export async function runCodex(messages, { model = DEFAULT_CODEX_MODEL, images =
       child.stdin.end(conversationPrompt(messages));
     });
   } finally {
-    active = false;
+    release();
     if (directory) await rm(directory,{ recursive:true, force:true }).catch(() => {});
   }
 }
